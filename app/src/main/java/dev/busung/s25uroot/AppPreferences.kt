@@ -67,7 +67,7 @@ object AppPreferences {
     }
 
     fun rescueDisableKsuModules(context: Context): Boolean =
-        prefs(context).getBoolean(RESCUE_DISABLE_KSU_MODULES, false)
+        prefs(context).getBoolean(RESCUE_DISABLE_KSU_MODULES, true)
 
     fun setRescueDisableKsuModules(context: Context, enabled: Boolean) {
         prefs(context).edit()
