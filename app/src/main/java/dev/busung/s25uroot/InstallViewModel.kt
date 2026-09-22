@@ -378,15 +378,15 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val command = """
             disabled=0
             for root in /data/adb/modules /data/adb/modules_update; do
-                [ -d "$root" ] || continue
-                for module in "$root"/*; do
-                    [ -d "$module" ] || continue
-                    : > "$module/disable" || exit 41
-                    disabled=$((disabled + 1))
-                    echo "[rescue] disabled ${module##*/}"
+                [ -d "${'$'}root" ] || continue
+                for module in "${'$'}root"/*; do
+                    [ -d "${'$'}module" ] || continue
+                    : > "${'$'}module/disable" || exit 41
+                    disabled=${'$'}((disabled + 1))
+                    echo "[rescue] disabled ${'$'}{module##*/}"
                 done
             done
-            echo "[rescue] modules_disabled=$disabled"
+            echo "[rescue] modules_disabled=${'$'}disabled"
         """.trimIndent()
         val result = runHelper("-c", command)
         require(result.code == 0) {
