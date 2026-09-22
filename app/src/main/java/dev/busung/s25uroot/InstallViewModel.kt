@@ -214,6 +214,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
                 setPhase(InstallPhase.Exploiting, app.getString(R.string.status_exploit_running))
                 executeExploit(payloads.exploit)
+                collectPrivilegedDiagnostics("post-exploit")
 
                 setPhase(InstallPhase.LoadingKernelSu, app.getString(R.string.status_ksu_loading))
                 installKernelSu(payloads)
@@ -362,6 +363,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             appendLog(app.getString(R.string.log_rescue_preparing))
             disableAllKernelSuModulesForRescue()
             appendLog(app.getString(R.string.log_rescue_ready))
+            collectPrivilegedDiagnostics("post-rescue")
         }
 
         if (shizukuEnabled()) {
@@ -391,6 +393,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             app.getString(R.string.error_ksu_verify, lateLoad.code, lateLoad.output)
         }
         if (lateLoad.output.isNotBlank()) appendLog(lateLoad.output)
+        collectPrivilegedDiagnostics("post-late-load")
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
     }
@@ -398,9 +401,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private suspend fun prepareLateLoadKernelSymbols() {
         val command = """
             echo 1 > /proc/sys/kernel/kptr_restrict || exit 42
-            value=$(cat /proc/sys/kernel/kptr_restrict 2>/dev/null)
-            echo "[ksu-prep] kptr_restrict=${'value"
-            [ "${'
+            value=${'$'}(cat /proc/sys/kernel/kptr_restrict 2>/dev/null)
+            echo "[ksu-prep] kptr_restrict=${'$'}value"
+            [ "${'$'}value" = "1" ] || exit 43
         """.trimIndent()
         val result = runHelper("-c", command)
         require(result.code == 0) {
@@ -414,269 +417,47 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[+] KSU_KPTR_READY")
     }
 
-    private suspend fun disableAllKernelSuModulesForRescue() {
+    private suspend fun collectPrivilegedDiagnostics(stage: String) {
+        appendLog("[*] PRIV_DIAG_START stage=$stage")
+        val quotedStage = shellQuote(stage)
         val command = """
-            disabled=0
+            echo "[diag] stage=$quotedStage"
+            echo "[diag] id=${'$'}(id 2>&1)"
+            echo "[diag] uname=${'$'}(uname -a 2>&1)"
+            echo "[diag] context=${'$'}(cat /proc/self/attr/current 2>/dev/null || echo unreadable)"
+            echo "[diag] kptr_restrict=${'$'}(cat /proc/sys/kernel/kptr_restrict 2>/dev/null || echo unreadable)"
+            for path in /data/adb /data/adb/modules /data/adb/modules_update; do
+                if [ -e "${'$'}path" ]; then
+                    ls -ld "${'$'}path" 2>&1 | sed 's/^/[diag] /'
+                else
+                    echo "[diag] missing ${'$'}path"
+                fi
+            done
             for root in /data/adb/modules /data/adb/modules_update; do
                 [ -d "${'$'}root" ] || continue
                 for module in "${'$'}root"/*; do
                     [ -d "${'$'}module" ] || continue
-                    : > "${'$'}module/disable" || exit 41
-                    disabled=${'$'}((disabled + 1))
-                    echo "[rescue] disabled ${'$'}{module##*/}"
+                    name=${'$'}{module##*/}
+                    state=enabled
+                    [ -e "${'$'}module/disable" ] && state=disabled
+                    [ -e "${'$'}module/remove" ] && state=remove
+                    echo "[diag] module=${'$'}name root=${'$'}root state=${'$'}state"
                 done
             done
-            echo "[rescue] modules_disabled=${'$'}disabled"
+            if [ -r /proc/modules ]; then
+                grep -Ei '(^|[[:space:]])(kernelsu|ksu)([[:space:]]|$)' /proc/modules 2>/dev/null | sed 's/^/[diag] module-line /' || true
+            else
+                echo "[diag] /proc/modules unreadable"
+            fi
+            for path in /sys/module/kernelsu /sys/module/ksu; do
+                [ -e "${'$'}path" ] && echo "[diag] present ${'$'}path"
+            done
+            ps -A 2>/dev/null | grep -Ei 'ksud|kernelsu|magisk|zygisk' | sed 's/^/[diag] process /' || true
+            echo "[diag] done"
         """.trimIndent()
         val result = runHelper("-c", command)
-        require(result.code == 0) {
-            app.getString(
-                R.string.error_rescue_disable_modules,
-                result.code,
-                result.output,
-            )
-        }
+        appendLog("[*] PRIV_DIAG_RETURN stage=$stage rc=${result.code}")
         if (result.output.isNotBlank()) appendLog(result.output)
-    }
-
-    private fun isExactS9360Czg1(device: DeviceSnapshot): Boolean =
-        device.model.equals("SM-S9360", ignoreCase = true) &&
-            (
-                device.buildId.contains("S9360ZCSCCZG1", ignoreCase = true) ||
-                    device.fingerprint.contains("S9360ZCSCCZG1", ignoreCase = true)
-            )
-
-    private fun detectInstalled(): Boolean {
-        if (NativeProbe.isKernelSuActive()) return true
-        val bootToken = currentBootToken() ?: return false
-        val receipt = app.getSharedPreferences(INSTALL_RECEIPT, Application.MODE_PRIVATE)
-        return receipt.getString(RECEIPT_BOOT_TOKEN, null) == bootToken &&
-            receipt.getBoolean(RECEIPT_VERIFIED, false)
-    }
-
-    private fun storeInstallReceipt() {
-        val bootToken = currentBootToken() ?: error(app.getString(R.string.error_boot_id))
-        val stored = app.getSharedPreferences(INSTALL_RECEIPT, Application.MODE_PRIVATE)
-            .edit()
-            .putString(RECEIPT_BOOT_TOKEN, bootToken)
-            .putBoolean(RECEIPT_VERIFIED, true)
-            .commit()
-        require(stored) { app.getString(R.string.error_receipt) }
-    }
-
-    private fun currentBootToken(): String? = runCatching {
-        File("/proc/sys/kernel/random/boot_id")
-            .readText(Charsets.US_ASCII)
-            .trim()
-            .takeIf(String::isNotBlank)
-    }.getOrNull()
-
-    private fun cachedP0Offset(bootToken: String?): String? {
-        if (bootToken == null) return null
-        val stored = app.getSharedPreferences(P0_CACHE, Application.MODE_PRIVATE)
-        if (stored.getString(P0_CACHE_BOOT_TOKEN, null) != bootToken) return null
-        return stored.getString(P0_CACHE_OFFSET, null)
-    }
-
-    private fun cacheP0Offset(bootToken: String?, log: String) {
-        if (bootToken == null) return
-        val match = P0_OFFSET_PATTERN.findAll(log).lastOrNull() ?: return
-        val offset = match.groupValues[1].toLongOrNull(16) ?: return
-        if (offset !in 0..P0_OFFSET_MAX || offset and P0_OFFSET_MASK != 0L) return
-        val value = "0x${offset.toString(16)}"
-        val stored = app.getSharedPreferences(P0_CACHE, Application.MODE_PRIVATE)
-        if (stored.getString(P0_CACHE_BOOT_TOKEN, null) == bootToken &&
-            stored.getString(P0_CACHE_OFFSET, null) == value
-        ) return
-        stored.edit()
-            .putString(P0_CACHE_BOOT_TOKEN, bootToken)
-            .putString(P0_CACHE_OFFSET, value)
-            .apply()
-    }
-
-    private fun helperFile(): File =
-        if (shizukuEnabled()) {
-            shizukuStage(nativeHelperFile(), SHIZUKU_HELPER_PATH, "755")
-        } else {
-            nativeHelperFile()
-        }
-
-    private fun nativeHelperFile() = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
-
-    private fun shizukuEnabled(): Boolean = activeRunShizuku ?: AppPreferences.shizukuMode(app)
-
-    private fun rescueModeEnabled(): Boolean =
-        activeRunRescueDisableModules ?: AppPreferences.rescueDisableKsuModules(app)
-
-    private fun shizukuStage(source: File, target: String, mode: String): File {
-        val staged = File(target)
-        if (stagedFileIsCurrent(staged, source)) return staged
-        try {
-            ShizukuController.writeFile(target, mode, source.inputStream())
-        } catch (error: Throwable) {
-            throw IllegalStateException(
-                app.getString(R.string.error_shizuku_stage, target, error.message.orEmpty()),
-                error,
-            )
-        }
-        return staged
-    }
-
-    private fun shizukuEnvironment(
-        bootToken: String?,
-        payloadPath: String,
-        helperPath: String,
-    ): Array<String> = buildList {
-        add("EXPLOIT_ATTEMPTS=$EXPLOIT_ATTEMPTS")
-        add("P0_ATTEMPT_TIMEOUT_SEC=$P0_ATTEMPT_TIMEOUT_SEC")
-        add("EXPLOIT_ATTEMPT_TIMEOUT_SEC=$EXPLOIT_ATTEMPT_TIMEOUT_SEC")
-        add("CVE43499_ROOT_HELPER=$helperPath")
-        add("LD_PRELOAD=$payloadPath")
-        cachedP0Offset(bootToken)?.let { add("$P0_OFFSET_ENV=$it") }
-    }.toTypedArray()
-
-    /**
-     * Runs the bootstrap helper for a short management command. Unlike the
-     * exploit run there is no log file to poll, so output is drained inline
-     * and a hard deadline guards against a helper that never exits — without
-     * this, a hung `--late-load` leaves the install stuck in LoadingKernelSu
-     * indefinitely.
-     */
-    private suspend fun runHelper(vararg arguments: String): CommandResult {
-        val helper = helperFile()
-        val process = if (shizukuEnabled()) {
-            ShizukuController.exec(arrayOf(helper.absolutePath) + arguments)
-        } else {
-            ProcessBuilder(listOf(helper.absolutePath) + arguments)
-                .redirectErrorStream(true)
-                .start()
-        }
-        val captured = StringBuilder()
-        val startedAt = SystemClock.elapsedRealtime()
-        try {
-            while (process.isAlive) {
-                drainProcessOutput(process, captured)
-                require(SystemClock.elapsedRealtime() - startedAt < HELPER_TIMEOUT_MILLIS) {
-                    app.getString(
-                        R.string.error_helper_timeout,
-                        captured.toString().trim().takeIf(String::isNotBlank)
-                            ?.let { ": $it" } ?: "",
-                    )
-                }
-                delay(HELPER_POLL_INTERVAL)
-            }
-            drainProcessOutput(process, captured)
-            val exitCode = process.waitFor()
-            return CommandResult(exitCode, stripAnsi(captured.toString().trim()))
-        } finally {
-            if (process.isAlive) {
-                process.destroy()
-                delay(500.milliseconds)
-                if (process.isAlive) process.destroyForcibly()
-            }
-        }
-    }
-
-    private fun shellQuote(value: String) = "'${value.replace("'", "'\\''")}'"
-
-    private fun setPhase(phase: InstallPhase, message: String) {
-        mutableState.value = mutableState.value.copy(phase = phase, message = message)
-        appendLog("[*] $message")
-    }
-
-    private fun appendLog(line: String) {
-        val cleanLine = stripAnsi(line).trim()
-        if (cleanLine.isBlank()) return
-        mutableState.value = mutableState.value.copy(
-            log = (mutableState.value.log + "\n" + cleanLine).trim(),
-        )
-        updateHistoryLog()
-    }
-
-    private fun startHistory() {
-        val entry = historyStore.create()
-        activeHistoryEntry = entry
-        publishHistory(entry)
-    }
-
-    private fun updateHistory(transform: (InstallHistoryEntry) -> InstallHistoryEntry) {
-        val entry = activeHistoryEntry ?: return
-        val updated = transform(entry)
-        activeHistoryEntry = updated
-        historyStore.save(updated)
-        publishHistory(updated)
-    }
-
-    private fun updateHistoryLog() =
-        updateHistory { it.copy(log = mutableState.value.log) }
-
-    private fun updateHistoryProfile(profileId: String) =
-        updateHistory { it.copy(profileId = profileId) }
-
-    private fun finishHistory(result: InstallRunResult) {
-        updateHistory { entry ->
-            entry.copy(
-                completedAtMillis = System.currentTimeMillis(),
-                result = result,
-                log = mutableState.value.log,
-            )
-        }
-        activeHistoryEntry = null
-    }
-
-    private fun publishHistory(entry: InstallHistoryEntry) {
-        mutableHistory.value = (mutableHistory.value.filterNot { it.id == entry.id } + entry)
-            .sortedByDescending(InstallHistoryEntry::startedAtMillis)
-    }
-
-    private fun File.readTextIfPresent(): String = if (exists()) readText() else ""
-
-    companion object {
-        private const val EXPLOIT_ATTEMPTS = "24"
-        private const val P0_ATTEMPT_TIMEOUT_SEC = "45"
-        private const val EXPLOIT_ATTEMPT_TIMEOUT_SEC = "120"
-        private const val EXPLOIT_STALL_MILLIS = 90_000L
-        private const val EXPLOIT_TOTAL_MILLIS = 900_000L
-        private const val HELPER_TIMEOUT_MILLIS = 120_000L
-        private const val INSTALL_RECEIPT = "install_receipt"
-        private const val RECEIPT_BOOT_TOKEN = "kernel_boot_id"
-        private const val RECEIPT_VERIFIED = "verified"
-        private const val P0_CACHE = "p0_cache"
-        private const val P0_CACHE_BOOT_TOKEN = "kernel_boot_id"
-        private const val P0_CACHE_OFFSET = "offset"
-        private const val P0_OFFSET_ENV = "SLIDE_P0_OFFSET"
-        private const val P0_OFFSET_MAX = 0x1f0000L
-        private const val P0_OFFSET_MASK = 0xffffL
-        private const val EXACT_S9360_CZG1_PROFILE = "pa2q-S9360ZCSCCZG1"
-        private const val SHIZUKU_LOG_PATH = "/data/local/tmp/ksu-exploit.log"
-        private const val SHIZUKU_HELPER_PATH = "/data/local/tmp/ksu-helper"
-        private const val SHIZUKU_PAYLOAD_PATH = "/data/local/tmp/ksu-payload"
-        private const val SHIZUKU_KSUD_PATH = "/data/local/tmp/ksud-s25u-kdp"
-        private const val SHIZUKU_KSUD_STAGE_PATH = "/data/local/tmp/.ksud-stage"
-        private val LOG_POLL_INTERVAL = 250.milliseconds
-        private val HELPER_POLL_INTERVAL = 250.milliseconds
-        private val SHIZUKU_LOG_POLL_INTERVAL = 1.seconds
-        private val ANSI_ESCAPE = Regex("\u001B\\[[0-?]*[ -/]*[@-~]")
-        private val P0_OFFSET_PATTERN = Regex(
-            "slide-kaslr-ok[^\\n]*slide=([0-9a-fA-F]{16})",
-        )
-
-        private fun stripAnsi(value: String): String = ANSI_ESCAPE.replace(value, "").replace("\r", "")
-    }
-}
- }value" = "1" ] || exit 43}value"
-            [ "${'value" = "1" ] || exit 43}value" = "1" ] || exit 43
-        """.trimIndent()
-        val result = runHelper("-c", command)
-        require(result.code == 0) {
-            app.getString(
-                R.string.error_ksu_kptr_prepare,
-                result.code,
-                result.output,
-            )
-        }
-        if (result.output.isNotBlank()) appendLog(result.output)
-        appendLog("[+] KSU_KPTR_READY")
     }
 
     private suspend fun disableAllKernelSuModulesForRescue() {
