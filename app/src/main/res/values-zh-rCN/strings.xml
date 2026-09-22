@@ -22,7 +22,7 @@
     <string name="action_continue">忽略并继续</string><string name="action_next">下一步</string>
     <string name="advanced">高级</string><string name="advanced_mode">高级模式</string><string name="advanced_mode_description">安装时手动选择设备兼容 payload</string>
     <string name="rescue_disable_ksu_modules">救砖模式：禁用 KernelSU 模块</string>
-    <string name="rescue_disable_ksu_modules_description">在 KernelSU late-load 前给已安装和待更新模块写入 disable 标记，不删除模块。</string>
+    <string name="rescue_disable_ksu_modules_description">在 KernelSU late-load 前给已安装和待更新模块写入 disable 标记，不删除模块；之后需手动重新启用。</string>
     <string name="log_rescue_preparing">[*] 救砖模式：正在 late-load 前禁用 KernelSU 模块</string>
     <string name="log_rescue_ready">[+] RESCUE_PREPARED：KernelSU 模块已标记为禁用</string>
     <string name="error_rescue_disable_modules">救砖模式禁用 KernelSU 模块失败 (rc=%1$d)：%2$s</string>
