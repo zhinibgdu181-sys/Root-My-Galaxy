@@ -142,6 +142,8 @@
     <string name="log_rescue_preparing">[*] Rescue mode: disabling KernelSU modules before late-load</string>
     <string name="log_rescue_ready">[+] RESCUE_PREPARED: KernelSU modules marked disabled</string>
     <string name="error_rescue_disable_modules">Rescue mode failed while disabling KernelSU modules (rc=%1$d): %2$s</string>
+    <string name="error_ksu_kptr_prepare">Unable to prepare kptr_restrict for KernelSU late-load (rc=%1$d): %2$s</string>
+    <string name="error_s9360_profile_mismatch">SM-S9360 / S9360ZCSCCZG1 must use pa2q-S9360ZCSCCZG1; selected profile was %1$s.</string>
     <string name="shizuku_mode">Use Shizuku</string>
     <string name="shizuku_mode_description">Use Shizuku to run the payload. This can improve reliability.</string>
     <string name="shizuku_not_running_title">Shizuku is not running</string>

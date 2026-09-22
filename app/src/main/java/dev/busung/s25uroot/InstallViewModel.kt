@@ -169,11 +169,19 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 probeOutput = mutableState.value.probeOutput,
             )
             startHistory()
-            // Freeze the transport for the whole run so a mid-run preference
-            // change cannot mix Shizuku and standalone execution between the
-            // exploit and the KernelSU staging steps.
+            val device = DeviceSnapshot.current()
+            val exactS9360Czg1 = isExactS9360Czg1(device)
+            // Freeze run-critical settings. For the exact SM-S9360 CZG1
+            // diagnostic target, rescue mode is forced on so an old persisted
+            // preference cannot silently bypass the module-disable step.
             activeRunShizuku = AppPreferences.shizukuMode(app)
-            activeRunRescueDisableModules = AppPreferences.rescueDisableKsuModules(app)
+            activeRunRescueDisableModules =
+                if (exactS9360Czg1) true else AppPreferences.rescueDisableKsuModules(app)
+            appendLog(
+                "[+] RESCUE_V2 build=${BuildConfig.VERSION_NAME} " +
+                    "rescue=${if (rescueModeEnabled()) "ON" else "OFF"} " +
+                    "shizuku=${if (shizukuEnabled()) "ON" else "OFF"}",
+            )
             try {
                 if (shizukuEnabled()) {
                     appendLog(app.getString(R.string.log_shizuku_prepare))
@@ -186,11 +194,17 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     appendLog(app.getString(R.string.log_shizuku_permission))
                 }
                 setPhase(InstallPhase.Checking, app.getString(R.string.status_checking_github))
-                val profile = if (profileId == null) {
-                    repository.resolveTarget(DeviceSnapshot.current())
+                val profile = if (exactS9360Czg1) {
+                    require(profileId == null || profileId == EXACT_S9360_CZG1_PROFILE) {
+                        app.getString(R.string.error_s9360_profile_mismatch, profileId.orEmpty())
+                    }
+                    repository.resolveTarget(EXACT_S9360_CZG1_PROFILE)
+                } else if (profileId == null) {
+                    repository.resolveTarget(device)
                 } else {
                     repository.resolveTarget(profileId)
                 }
+                appendLog("[+] RESOLVED_PROFILE=${profile.profileId}")
                 appendLog(app.getString(R.string.log_profile, profile.profileId))
                 updateHistoryProfile(profile.profileId)
 
@@ -342,6 +356,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun installKernelSu(payloads: VerifiedPayloads) {
+        prepareLateLoadKernelSymbols()
+
         if (rescueModeEnabled()) {
             appendLog(app.getString(R.string.log_rescue_preparing))
             disableAllKernelSuModulesForRescue()
@@ -363,6 +379,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             appendLog(app.getString(R.string.log_ksu_staged))
         }
 
+        for (second in 1..3) {
+            appendLog("[*] KSU_POST_STAGE_SETTLE $second/3")
+            delay(1.seconds)
+        }
+        appendLog("[+] KSU_POST_STAGE_SETTLE_DONE")
         appendLog("[*] KSU_LATE_LOAD_START")
         val lateLoad = runHelper("--late-load")
         appendLog("[*] KSU_LATE_LOAD_RETURN rc=${lateLoad.code}")
@@ -372,6 +393,25 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         if (lateLoad.output.isNotBlank()) appendLog(lateLoad.output)
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
+    }
+
+    private suspend fun prepareLateLoadKernelSymbols() {
+        val command = """
+            echo 1 > /proc/sys/kernel/kptr_restrict || exit 42
+            value=$(cat /proc/sys/kernel/kptr_restrict 2>/dev/null)
+            echo "[ksu-prep] kptr_restrict=$value"
+            [ "$value" = "1" ] || exit 43
+        """.trimIndent()
+        val result = runHelper("-c", command)
+        require(result.code == 0) {
+            app.getString(
+                R.string.error_ksu_kptr_prepare,
+                result.code,
+                result.output,
+            )
+        }
+        if (result.output.isNotBlank()) appendLog(result.output)
+        appendLog("[+] KSU_KPTR_READY")
     }
 
     private suspend fun disableAllKernelSuModulesForRescue() {
@@ -398,6 +438,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
         if (result.output.isNotBlank()) appendLog(result.output)
     }
+
+    private fun isExactS9360Czg1(device: DeviceSnapshot): Boolean =
+        device.model.equals("SM-S9360", ignoreCase = true) &&
+            (
+                device.buildId.contains("S9360ZCSCCZG1", ignoreCase = true) ||
+                    device.fingerprint.contains("S9360ZCSCCZG1", ignoreCase = true)
+            )
 
     private fun detectInstalled(): Boolean {
         if (NativeProbe.isKernelSuActive()) return true
@@ -600,6 +647,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val P0_OFFSET_ENV = "SLIDE_P0_OFFSET"
         private const val P0_OFFSET_MAX = 0x1f0000L
         private const val P0_OFFSET_MASK = 0xffffL
+        private const val EXACT_S9360_CZG1_PROFILE = "pa2q-S9360ZCSCCZG1"
         private const val SHIZUKU_LOG_PATH = "/data/local/tmp/ksu-exploit.log"
         private const val SHIZUKU_HELPER_PATH = "/data/local/tmp/ksu-helper"
         private const val SHIZUKU_PAYLOAD_PATH = "/data/local/tmp/ksu-payload"
