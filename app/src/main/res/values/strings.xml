@@ -138,7 +138,7 @@
     <string name="advanced_mode">Advanced mode</string>
     <string name="advanced_mode_description">Manually choose a device-compatible payload during installation</string>
     <string name="rescue_disable_ksu_modules">Rescue mode: disable KernelSU modules</string>
-    <string name="rescue_disable_ksu_modules_description">Before KernelSU late-load, mark all installed and pending modules disabled without deleting them.</string>
+    <string name="rescue_disable_ksu_modules_description">Before KernelSU late-load, mark all installed and pending modules disabled without deleting them. They stay disabled until you re-enable them.</string>
     <string name="log_rescue_preparing">[*] Rescue mode: disabling KernelSU modules before late-load</string>
     <string name="log_rescue_ready">[+] RESCUE_PREPARED: KernelSU modules marked disabled</string>
     <string name="error_rescue_disable_modules">Rescue mode failed while disabling KernelSU modules (rc=%1$d): %2$s</string>
