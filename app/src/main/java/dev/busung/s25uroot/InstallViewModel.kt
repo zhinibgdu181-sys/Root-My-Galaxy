@@ -88,6 +88,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
     @Volatile
     private var activeRunShizuku: Boolean? = null
+
+    @Volatile
+    private var activeRunRescueDisableModules: Boolean? = null
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val history: StateFlow<List<InstallHistoryEntry>> = mutableHistory.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -170,6 +173,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             // change cannot mix Shizuku and standalone execution between the
             // exploit and the KernelSU staging steps.
             activeRunShizuku = AppPreferences.shizukuMode(app)
+            activeRunRescueDisableModules = AppPreferences.rescueDisableKsuModules(app)
             try {
                 if (shizukuEnabled()) {
                     appendLog(app.getString(R.string.log_shizuku_prepare))
@@ -209,6 +213,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 finishHistory(InstallRunResult.Failed)
             } finally {
                 activeRunShizuku = null
+                activeRunRescueDisableModules = null
             }
         }
     }
@@ -337,6 +342,12 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun installKernelSu(payloads: VerifiedPayloads) {
+        if (rescueModeEnabled()) {
+            appendLog(app.getString(R.string.log_rescue_preparing))
+            disableAllKernelSuModulesForRescue()
+            appendLog(app.getString(R.string.log_rescue_ready))
+        }
+
         if (shizukuEnabled()) {
             shizukuStage(payloads.kernelSu, SHIZUKU_KSUD_PATH, "755")
             shizukuStage(payloads.kernelSu, SHIZUKU_KSUD_STAGE_PATH, "755")
@@ -352,13 +363,40 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             appendLog(app.getString(R.string.log_ksu_staged))
         }
 
+        appendLog("[*] KSU_LATE_LOAD_START")
         val lateLoad = runHelper("--late-load")
+        appendLog("[*] KSU_LATE_LOAD_RETURN rc=${lateLoad.code}")
         require(lateLoad.code == 0) {
             app.getString(R.string.error_ksu_verify, lateLoad.code, lateLoad.output)
         }
         if (lateLoad.output.isNotBlank()) appendLog(lateLoad.output)
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
+    }
+
+    private suspend fun disableAllKernelSuModulesForRescue() {
+        val command = """
+            disabled=0
+            for root in /data/adb/modules /data/adb/modules_update; do
+                [ -d "$root" ] || continue
+                for module in "$root"/*; do
+                    [ -d "$module" ] || continue
+                    : > "$module/disable" || exit 41
+                    disabled=$((disabled + 1))
+                    echo "[rescue] disabled ${module##*/}"
+                done
+            done
+            echo "[rescue] modules_disabled=$disabled"
+        """.trimIndent()
+        val result = runHelper("-c", command)
+        require(result.code == 0) {
+            app.getString(
+                R.string.error_rescue_disable_modules,
+                result.code,
+                result.output,
+            )
+        }
+        if (result.output.isNotBlank()) appendLog(result.output)
     }
 
     private fun detectInstalled(): Boolean {
@@ -419,6 +457,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private fun nativeHelperFile() = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
 
     private fun shizukuEnabled(): Boolean = activeRunShizuku ?: AppPreferences.shizukuMode(app)
+
+    private fun rescueModeEnabled(): Boolean =
+        activeRunRescueDisableModules ?: AppPreferences.rescueDisableKsuModules(app)
 
     private fun shizukuStage(source: File, target: String, mode: String): File {
         val staged = File(target)
