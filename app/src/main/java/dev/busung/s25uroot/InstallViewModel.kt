@@ -574,8 +574,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 .start()
         }
         if (isLateLoad) {
-            val pid = runCatching { process.pid() }.getOrDefault(-1L)
-            appendLog("[*] KSU_LATE_LOAD_PID pid=$pid")
+            appendLog("[*] KSU_LATE_LOAD_PROCESS_STARTED")
         }
         val captured = StringBuilder()
         val startedAt = SystemClock.elapsedRealtime()
