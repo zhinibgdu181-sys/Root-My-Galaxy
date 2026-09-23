@@ -93,6 +93,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
     @Volatile
     private var activeRunRescueDisableModules: Boolean? = null
+
+    @Volatile
+    private var lateLoadStarted = false
+
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val history: StateFlow<List<InstallHistoryEntry>> = mutableHistory.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -224,10 +228,17 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 appendLog(app.getString(R.string.log_install_complete))
                 finishHistory(InstallRunResult.Succeeded)
             } catch (error: Throwable) {
+                if (lateLoadStarted) {
+                    collectNativeLateLoadDiagnostic("failure")
+                }
                 appendLog("[-] ${error.message ?: error.javaClass.simpleName}")
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
                 finishHistory(InstallRunResult.Failed)
             } finally {
+                if (lateLoadStarted) {
+                    collectNativeLateLoadDiagnostic("finally")
+                }
+                lateLoadStarted = false
                 activeRunShizuku = null
                 activeRunRescueDisableModules = null
             }
@@ -447,8 +458,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[+] KSU_STAGE_VERIFY_DONE")
 
         appendLog("[*] KSU_LATE_LOAD_START")
+        appendLog("[*] KSU_LATE_LOAD_NATIVE_DIAG_PATH=$KSU_NATIVE_DIAGNOSTIC_PATH")
+        lateLoadStarted = true
         val lateLoad = runHelper("--late-load")
         appendLog("[*] KSU_LATE_LOAD_RETURN rc=${lateLoad.code}")
+        collectNativeLateLoadDiagnostic("return")
         require(lateLoad.code == 0) {
             app.getString(R.string.error_ksu_verify, lateLoad.code, lateLoad.output)
         }
@@ -722,6 +736,37 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun collectNativeLateLoadDiagnostic(reason: String) {
+        runCatching {
+            val result = runHelper(
+                "-c",
+                "/system/bin/cat $KSU_NATIVE_DIAGNOSTIC_PATH 2>/dev/null || true",
+            )
+            appendLog(
+                "[*] KSU_NATIVE_DIAG_CAPTURE reason=${reason} rc=${result.code} " +
+                    "chars=${result.output.length}",
+            )
+            val output = result.output.trim()
+            if (output.isBlank()) {
+                appendLog("[*] KSU_NATIVE_DIAG_EMPTY reason=${reason}")
+                return@runCatching
+            }
+            appendLog("[----- KSU_NATIVE_DIAG_BEGIN reason=${reason} -----]")
+            output.lineSequence()
+                .takeLast(300)
+                .forEach { line ->
+                    if (line.isNotBlank()) appendLog("[native] $line")
+                }
+            appendLog("[----- KSU_NATIVE_DIAG_END reason=${reason} -----]")
+        }.onFailure { error ->
+            appendLog(
+                "[!] KSU_NATIVE_DIAG_CAPTURE_ERROR reason=${reason} " +
+                    "type=${error.javaClass.simpleName} " +
+                    "message=${error.message ?: "unknown"}",
+            )
+        }
+    }
+
     private fun startHistory() {
         val entry = historyStore.create()
         activeHistoryEntry = entry
@@ -784,6 +829,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val SHIZUKU_PAYLOAD_PATH = "/data/local/tmp/ksu-payload"
         private const val SHIZUKU_KSUD_PATH = "/data/local/tmp/ksud-s25u-kdp"
         private const val SHIZUKU_KSUD_STAGE_PATH = "/data/local/tmp/.ksud-stage"
+        private const val KSU_NATIVE_DIAGNOSTIC_PATH = "/data/local/tmp/ksu-late-load.log"
         private const val PERSISTENT_DIAGNOSTIC_LOG = "rootmygalaxy-diagnostic.log"
         private val LOG_POLL_INTERVAL = 250.milliseconds
         private val HELPER_POLL_INTERVAL = 250.milliseconds
