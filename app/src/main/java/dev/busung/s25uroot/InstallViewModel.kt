@@ -736,7 +736,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun collectNativeLateLoadDiagnostic(reason: String) {
+    private suspend fun collectNativeLateLoadDiagnostic(reason: String) {
         runCatching {
             val result = runHelper(
                 "-c",
@@ -752,7 +752,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 return@runCatching
             }
             appendLog("[----- KSU_NATIVE_DIAG_BEGIN reason=${reason} -----]")
-            output.lineSequence()
+            output.lines()
                 .takeLast(300)
                 .forEach { line ->
                     if (line.isNotBlank()) appendLog("[native] $line")
