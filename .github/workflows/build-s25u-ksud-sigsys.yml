@@ -132,6 +132,16 @@ jobs:
           PY
           grep -n 'kptr_restrict' app/src/main/java/dev/busung/s25uroot/InstallViewModel.kt | tail -n 3
 
+      - name: Add runtime diagnostics and crash-safe log export
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/patch_runtime_diagnostics.py
+          grep -n 'KSU_LATE_LOAD_EXEC\|KSU_LATE_LOAD_WAIT\|persistCrashSafeLog' \
+            app/src/main/java/dev/busung/s25uroot/InstallViewModel.kt
+          grep -n 'CreateDocument\|RootMyGalaxy-live' \
+            app/src/main/java/dev/busung/s25uroot/InstallActivity.kt
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
