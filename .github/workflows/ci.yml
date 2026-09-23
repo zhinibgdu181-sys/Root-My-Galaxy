@@ -1,4 +1,5 @@
 name: CI Build
+# Build current main after KernelSU diagnostic export ordering fix.
 
 on:
   push:
