@@ -72,6 +72,10 @@ jobs:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           set -euo pipefail
+          # KernelSU v3.2.5 still references the former Kernel-SU GitHub org.
+          # The repositories were moved to KernelSU2 with history preserved;
+          # rewrite transport URLs without changing Cargo.lock revisions.
+          git config --global url."https://github.com/KernelSU2/".insteadOf "https://github.com/Kernel-SU/"
           cd KernelSU
           source .github/scripts/setup-rust-build.sh aarch64-linux-android 35
           cargo build --release --target aarch64-linux-android -p ksud --locked
