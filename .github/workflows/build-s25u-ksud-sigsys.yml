@@ -104,13 +104,22 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Bundle patched ksud into app assets
+      - name: Bundle hardware-validated S9360 ksud into app assets
         shell: bash
         run: |
           set -euo pipefail
+          VALIDATED_KSUD=Payloads/kernelsu/ksud-s25u-kdp
+          test -f "$VALIDATED_KSUD"
+          test "$(stat -c%s "$VALIDATED_KSUD")" -eq 6407096
           mkdir -p app/src/main/assets
-          cp out/ksud-s25u-kdp-sigsys-hotfix app/src/main/assets/ksud-s25u-kdp
-          cmp out/ksud-s25u-kdp-sigsys-hotfix app/src/main/assets/ksud-s25u-kdp
+          cp "$VALIDATED_KSUD" app/src/main/assets/ksud-s25u-kdp
+          cmp "$VALIDATED_KSUD" app/src/main/assets/ksud-s25u-kdp
+          sha256sum "$VALIDATED_KSUD" | tee -a out/SHA256SUMS.txt
+          printf '%s\n' \
+            "Runtime APK ksud: BuSung-dev/Root-My-Galaxy-Payloads/kernelsu/ksud-s25u-kdp" \
+            "Runtime ksud size: $(stat -c%s "$VALIDATED_KSUD")" \
+            "Payloads commit: $(git -C Payloads rev-parse HEAD)" \
+            >> out/BUILD_INFO.txt
 
       - name: Repair inherited InstallViewModel shell literal
         shell: bash
@@ -157,7 +166,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK with bundled patched ksud
+      - name: Build debug APK with validated ksud and diagnostics
         shell: bash
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -167,13 +176,15 @@ jobs:
           APK=$(find app/build/outputs/apk/debug -name '*.apk' -type f | head -n1)
           test -n "$APK"
           unzip -l "$APK" | grep -q 'assets/ksud-s25u-kdp'
-          cp "$APK" out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk
-          sha256sum out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk >> out/SHA256SUMS.txt
+          unzip -p "$APK" assets/ksud-s25u-kdp > out/apk-ksud-s25u-kdp
+          cmp Payloads/kernelsu/ksud-s25u-kdp out/apk-ksud-s25u-kdp
+          cp "$APK" out/RootMyGalaxy-S25U-validated-ksud-diagnostics.apk
+          sha256sum out/RootMyGalaxy-S25U-validated-ksud-diagnostics.apk >> out/SHA256SUMS.txt
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: RootMyGalaxy-S25U-SIGSYS-hotfix-apk
-          path: out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk
+          name: RootMyGalaxy-S25U-validated-ksud-diagnostics-apk
+          path: out/RootMyGalaxy-S25U-validated-ksud-diagnostics.apk
           if-no-files-found: error
           retention-days: 14
