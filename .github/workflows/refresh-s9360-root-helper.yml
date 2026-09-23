@@ -1,4 +1,5 @@
 name: Refresh S9360 root helper
+# Rebuild helper after payload-source changes.
 
 on:
   push:
