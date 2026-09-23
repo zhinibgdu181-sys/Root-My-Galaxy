@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -385,13 +387,56 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             appendLog(app.getString(R.string.log_ksu_staged))
         }
 
-        appendLog("[*] KSU_POST_STAGE_SETTLE_BEGIN")
-        for (second in 1..3) {
-            appendLog("[*] KSU_POST_STAGE_SETTLE_STEP_BEGIN $second/3")
-            delay(1.seconds)
-            appendLog("[*] KSU_POST_STAGE_SETTLE_STEP_DONE $second/3")
+        appendLog("[*] KSU_POST_STAGE_SETTLE_BEGIN elapsed_ms=0")
+        val settleStartedAt = SystemClock.elapsedRealtime()
+        try {
+            withTimeout(KSU_SETTLE_TIMEOUT_MILLIS) {
+                for (second in 1..3) {
+                    ensureActive()
+                    val stepStartedAt = SystemClock.elapsedRealtime()
+                    appendLog(
+                        "[*] KSU_POST_STAGE_SETTLE_STEP_BEGIN $second/3 " +
+                            "elapsed_ms=${stepStartedAt - settleStartedAt}",
+                    )
+                    delay(1.seconds)
+                    ensureActive()
+                    val stepElapsed = SystemClock.elapsedRealtime() - stepStartedAt
+                    appendLog(
+                        "[*] KSU_POST_STAGE_SETTLE_STEP_DONE $second/3 " +
+                            "step_elapsed_ms=$stepElapsed " +
+                            "elapsed_ms=${SystemClock.elapsedRealtime() - settleStartedAt}",
+                    )
+                }
+            }
+            appendLog(
+                "[+] KSU_POST_STAGE_SETTLE_DONE " +
+                    "elapsed_ms=${SystemClock.elapsedRealtime() - settleStartedAt}",
+            )
+        } catch (error: Throwable) {
+            val elapsed = SystemClock.elapsedRealtime() - settleStartedAt
+            when (error) {
+                is kotlinx.coroutines.TimeoutCancellationException -> {
+                    appendLog(
+                        "[!] KSU_POST_STAGE_SETTLE_TIMEOUT " +
+                            "elapsed_ms=$elapsed limit_ms=$KSU_SETTLE_TIMEOUT_MILLIS",
+                    )
+                }
+                is kotlinx.coroutines.CancellationException -> {
+                    appendLog(
+                        "[!] KSU_POST_STAGE_SETTLE_CANCELLED " +
+                            "elapsed_ms=$elapsed reason=${error.message ?: "cancelled"}",
+                    )
+                }
+                else -> {
+                    appendLog(
+                        "[!] KSU_POST_STAGE_SETTLE_ERROR " +
+                            "elapsed_ms=$elapsed type=${error.javaClass.simpleName} " +
+                            "message=${error.message ?: "unknown"}",
+                    )
+                }
+            }
+            throw error
         }
-        appendLog("[+] KSU_POST_STAGE_SETTLE_DONE")
         appendLog("[*] KSU_STAGE_VERIFY_BEGIN")
         val stageBefore = runHelper(
             "-c",
@@ -723,6 +768,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val EXPLOIT_TOTAL_MILLIS = 900_000L
         private const val HELPER_TIMEOUT_MILLIS = 120_000L
         private const val HELPER_HEARTBEAT_MILLIS = 5_000L
+        private const val KSU_SETTLE_TIMEOUT_MILLIS = 15_000L
         private const val INSTALL_RECEIPT = "install_receipt"
         private const val RECEIPT_BOOT_TOKEN = "kernel_boot_id"
         private const val RECEIPT_VERIFIED = "verified"
