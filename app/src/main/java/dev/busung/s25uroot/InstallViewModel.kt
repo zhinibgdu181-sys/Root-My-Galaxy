@@ -224,6 +224,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 setPhase(InstallPhase.LoadingKernelSu, app.getString(R.string.status_ksu_loading))
                 installKernelSu(payloads)
 
+                if (lateLoadStarted) {
+                    // Collect the root-side native journal BEFORE closing the
+                    // history entry. finishHistory() clears activeHistoryEntry,
+                    // so collecting in finally would otherwise be invisible
+                    // to the exported run log.
+                    collectNativeLateLoadDiagnostic("success")
+                }
                 setPhase(InstallPhase.Installed, app.getString(R.string.status_ksu_active))
                 appendLog(app.getString(R.string.log_install_complete))
                 finishHistory(InstallRunResult.Succeeded)
@@ -235,9 +242,6 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
                 finishHistory(InstallRunResult.Failed)
             } finally {
-                if (lateLoadStarted) {
-                    collectNativeLateLoadDiagnostic("finally")
-                }
                 lateLoadStarted = false
                 activeRunShizuku = null
                 activeRunRescueDisableModules = null
@@ -457,6 +461,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         if (stageBefore.output.isNotBlank()) appendLog(stageBefore.output)
         appendLog("[+] KSU_STAGE_VERIFY_DONE")
 
+        // Start every late-load attempt with a fresh native journal. Otherwise
+        // a previous run can be mistaken for the current run after a crash.
+        val resetDiag = runHelper(
+            "-c",
+            "/system/bin/rm -f $KSU_NATIVE_DIAGNOSTIC_PATH",
+        )
+        appendLog("[*] KSU_NATIVE_DIAG_RESET rc=${resetDiag.code}")
+        require(resetDiag.code == 0) {
+            app.getString(R.string.error_ksu_stage, resetDiag.code, resetDiag.output)
+        }
         appendLog("[*] KSU_LATE_LOAD_START")
         appendLog("[*] KSU_LATE_LOAD_NATIVE_DIAG_PATH=$KSU_NATIVE_DIAGNOSTIC_PATH")
         lateLoadStarted = true
