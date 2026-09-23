@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/refresh-s9360-root-helper.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
