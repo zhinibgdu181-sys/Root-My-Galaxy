@@ -46,6 +46,10 @@ jobs:
           strings "$HELPER" | grep -F 'KSU_NATIVE_START'
           strings "$HELPER" | grep -F 'KSU_LOADER_EXEC'
           strings "$HELPER" | grep -F 'KSU_CONTROL_IOCTL'
+          if strings "$HELPER" | grep -F -- '--ephemeral'; then
+            echo "ERROR: stale --ephemeral argument found in helper"
+            exit 1
+          fi
           sha256sum "$HELPER"
 
       - name: Replace APK root helper
@@ -58,6 +62,10 @@ jobs:
           cp "$SRC" "$DST"
           chmod 0644 "$DST"
           file "$DST"
+          if strings "$DST" | grep -F -- '--ephemeral'; then
+            echo "ERROR: stale --ephemeral argument found in APK helper"
+            exit 1
+          fi
           sha256sum "$DST"
 
       - name: Commit refreshed helper
@@ -71,5 +79,5 @@ jobs:
             echo 'Root helper is already current.'
             exit 0
           fi
-          git commit -m 'Refresh S9360 root helper diagnostics'
+          git commit -m 'Refresh S9360 root helper from latest payload'
           git push origin HEAD:main
