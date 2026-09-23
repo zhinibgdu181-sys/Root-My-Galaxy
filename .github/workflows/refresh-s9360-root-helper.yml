@@ -37,6 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           TARGET=pa2q-S9360ZCSCCZG1
+          echo "Payload source commit: $(git -C payloads rev-parse HEAD)"
           make -C payloads TARGET="$TARGET" "build/$TARGET/cve-2026-43499-root"
           HELPER="payloads/build/$TARGET/cve-2026-43499-root"
           test -s "$HELPER"
