@@ -385,9 +385,11 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             appendLog(app.getString(R.string.log_ksu_staged))
         }
 
+        appendLog("[*] KSU_POST_STAGE_SETTLE_BEGIN")
         for (second in 1..3) {
-            appendLog("[*] KSU_POST_STAGE_SETTLE $second/3")
+            appendLog("[*] KSU_POST_STAGE_SETTLE_STEP_BEGIN $second/3")
             delay(1.seconds)
+            appendLog("[*] KSU_POST_STAGE_SETTLE_STEP_DONE $second/3")
         }
         appendLog("[+] KSU_POST_STAGE_SETTLE_DONE")
         appendLog("[*] KSU_STAGE_VERIFY_BEGIN")
@@ -655,10 +657,24 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private fun appendLog(line: String) {
         val cleanLine = stripAnsi(line).trim()
         if (cleanLine.isBlank()) return
+
+        // Persist every diagnostic line immediately. The in-memory UI/history
+        // log can disappear if the process is killed or the UI is recreated;
+        // this sidecar is the authoritative crash/debug breadcrumb trail.
+        persistDiagnosticLine(cleanLine)
+
         mutableState.value = mutableState.value.copy(
             log = (mutableState.value.log + "\n" + cleanLine).trim(),
         )
         updateHistoryLog()
+    }
+
+    private fun persistDiagnosticLine(line: String) {
+        runCatching {
+            val file = File(app.filesDir, PERSISTENT_DIAGNOSTIC_LOG)
+            file.parentFile?.mkdirs()
+            file.appendText(line + "\n", Charsets.UTF_8)
+        }
     }
 
     private fun startHistory() {
@@ -722,6 +738,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val SHIZUKU_PAYLOAD_PATH = "/data/local/tmp/ksu-payload"
         private const val SHIZUKU_KSUD_PATH = "/data/local/tmp/ksud-s25u-kdp"
         private const val SHIZUKU_KSUD_STAGE_PATH = "/data/local/tmp/.ksud-stage"
+        private const val PERSISTENT_DIAGNOSTIC_LOG = "rootmygalaxy-diagnostic.log"
         private val LOG_POLL_INTERVAL = 250.milliseconds
         private val HELPER_POLL_INTERVAL = 250.milliseconds
         private val SHIZUKU_LOG_POLL_INTERVAL = 1.seconds
