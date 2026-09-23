@@ -4,6 +4,7 @@ import android.content.Context
 import android.system.Os
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -41,7 +42,7 @@ class PayloadRepository(private val context: Context) {
             context.getString(R.string.artifact_exploit),
             onProgress,
         )
-        val kernelSu = downloadArtifact(
+        val kernelSu = bundledKernelSuOrDownload(
             profile.kernelSu,
             File(directory, "ksud-s25u-kdp"),
             context.getString(R.string.artifact_kernelsu),
@@ -50,6 +51,32 @@ class PayloadRepository(private val context: Context) {
         Os.chmod(exploit.absolutePath, 0b100100100)
         Os.chmod(kernelSu.absolutePath, 0b100100100)
         return VerifiedPayloads(profile, exploit, kernelSu)
+    }
+
+    private fun bundledKernelSuOrDownload(
+        artifact: RemoteArtifact,
+        destination: File,
+        label: String,
+        onProgress: (String) -> Unit,
+    ): File {
+        return try {
+            context.assets.open(BUNDLED_KERNELSU_ASSET).use { input ->
+                onProgress(context.getString(R.string.repo_downloading, label))
+                val temporary = File(destination.parentFile, "${destination.name}.part")
+                FileOutputStream(temporary).use { output ->
+                    input.copyTo(output)
+                    output.fd.sync()
+                }
+                if (destination.exists()) destination.delete()
+                require(temporary.renameTo(destination)) {
+                    context.getString(R.string.repo_finalize_failed, label)
+                }
+                onProgress(context.getString(R.string.repo_verified, label))
+                destination
+            }
+        } catch (_: FileNotFoundException) {
+            downloadArtifact(artifact, destination, label, onProgress)
+        }
     }
 
     private fun downloadArtifact(
@@ -136,6 +163,7 @@ class PayloadRepository(private val context: Context) {
         }
 
     companion object {
+        private const val BUNDLED_KERNELSU_ASSET = "ksud-s25u-kdp"
         private const val COMMIT_API_URL =
             "https://api.github.com/repos/BuSung-dev/Root-My-Galaxy-Payloads/git/ref/heads/main"
         private const val RAW_REPOSITORY =
