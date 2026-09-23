@@ -1,0 +1,73 @@
+name: Refresh S9360 root helper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/refresh-s9360-root-helper.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Checkout payload sources
+        uses: actions/checkout@v4
+        with:
+          repository: zhinibgdu181-sys/Root-My-Galaxy-Payloads
+          ref: main
+          path: payloads
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Build S9360 root helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=pa2q-S9360ZCSCCZG1
+          make -C payloads TARGET="$TARGET" "build/$TARGET/cve-2026-43499-root"
+          HELPER="payloads/build/$TARGET/cve-2026-43499-root"
+          test -s "$HELPER"
+          file "$HELPER"
+          strings "$HELPER" | grep -F 'KSU_NATIVE_START'
+          strings "$HELPER" | grep -F 'KSU_LOADER_EXEC'
+          strings "$HELPER" | grep -F 'KSU_CONTROL_IOCTL'
+          sha256sum "$HELPER"
+
+      - name: Replace APK root helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=pa2q-S9360ZCSCCZG1
+          SRC="payloads/build/$TARGET/cve-2026-43499-root"
+          DST="app/src/main/jniLibs/arm64-v8a/libcve43499root.so"
+          cp "$SRC" "$DST"
+          chmod 0644 "$DST"
+          file "$DST"
+          sha256sum "$DST"
+
+      - name: Commit refreshed helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/main/jniLibs/arm64-v8a/libcve43499root.so
+          if git diff --cached --quiet; then
+            echo 'Root helper is already current.'
+            exit 0
+          fi
+          git commit -m 'Refresh S9360 root helper diagnostics'
+          git push origin HEAD:main
