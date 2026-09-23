@@ -384,6 +384,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             delay(1.seconds)
         }
         appendLog("[+] KSU_POST_STAGE_SETTLE_DONE")
+        val stageBefore = runHelper(
+            "-c",
+            "/system/bin/ls -l $SHIZUKU_KSUD_PATH $SHIZUKU_KSUD_STAGE_PATH /data/adb/ksud 2>&1 || true",
+        )
+        appendLog("[*] KSU_LATE_LOAD_STAGE_BEFORE rc=${stageBefore.code}")
+        if (stageBefore.output.isNotBlank()) appendLog(stageBefore.output)
+
         appendLog("[*] KSU_LATE_LOAD_START")
         val lateLoad = runHelper("--late-load")
         appendLog("[*] KSU_LATE_LOAD_RETURN rc=${lateLoad.code}")
@@ -391,6 +398,14 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             app.getString(R.string.error_ksu_verify, lateLoad.code, lateLoad.output)
         }
         if (lateLoad.output.isNotBlank()) appendLog(lateLoad.output)
+
+        val stageAfter = runHelper(
+            "-c",
+            "/system/bin/ls -l $SHIZUKU_KSUD_PATH $SHIZUKU_KSUD_STAGE_PATH /data/adb/ksud 2>&1 || true",
+        )
+        appendLog("[*] KSU_LATE_LOAD_STAGE_AFTER rc=${stageAfter.code}")
+        if (stageAfter.output.isNotBlank()) appendLog(stageAfter.output)
+
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
     }
@@ -399,8 +414,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val command = """
             echo 1 > /proc/sys/kernel/kptr_restrict || exit 42
             value=$(cat /proc/sys/kernel/kptr_restrict 2>/dev/null)
-            echo "[ksu-prep] kptr_restrict=$value"
-            [ "$value" = "1" ] || exit 43
+            echo "[ksu-prep] kptr_restrict=${'$'}value"
+            [ "${'$'}value" = "1" ] || exit 43
         """.trimIndent()
         val result = runHelper("-c", command)
         require(result.code == 0) {
@@ -544,6 +559,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
      */
     private suspend fun runHelper(vararg arguments: String): CommandResult {
         val helper = helperFile()
+        val isLateLoad = arguments.size == 1 && arguments[0] == "--late-load"
+        if (isLateLoad) {
+            appendLog(
+                "[*] KSU_LATE_LOAD_EXEC helper=${helper.absolutePath} " +
+                    "shizuku=${if (shizukuEnabled()) "ON" else "OFF"}",
+            )
+        }
         val process = if (shizukuEnabled()) {
             ShizukuController.exec(arrayOf(helper.absolutePath) + arguments)
         } else {
@@ -551,12 +573,31 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 .redirectErrorStream(true)
                 .start()
         }
+        if (isLateLoad) {
+            val pid = runCatching { process.pid() }.getOrDefault(-1L)
+            appendLog("[*] KSU_LATE_LOAD_PID pid=$pid")
+        }
         val captured = StringBuilder()
         val startedAt = SystemClock.elapsedRealtime()
+        var publishedLength = 0
+        var lastHeartbeatAt = startedAt
         try {
             while (process.isAlive) {
                 drainProcessOutput(process, captured)
-                require(SystemClock.elapsedRealtime() - startedAt < HELPER_TIMEOUT_MILLIS) {
+                if (isLateLoad && captured.length > publishedLength) {
+                    val delta = stripAnsi(captured.substring(publishedLength)).trim()
+                    publishedLength = captured.length
+                    if (delta.isNotBlank()) appendLog(delta)
+                }
+                val now = SystemClock.elapsedRealtime()
+                if (isLateLoad && now - lastHeartbeatAt >= HELPER_HEARTBEAT_MILLIS) {
+                    appendLog(
+                        "[*] KSU_LATE_LOAD_WAIT elapsed_ms=${now - startedAt} " +
+                            "captured_chars=${captured.length}",
+                    )
+                    lastHeartbeatAt = now
+                }
+                require(now - startedAt < HELPER_TIMEOUT_MILLIS) {
                     app.getString(
                         R.string.error_helper_timeout,
                         captured.toString().trim().takeIf(String::isNotBlank)
@@ -566,13 +607,33 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 delay(HELPER_POLL_INTERVAL)
             }
             drainProcessOutput(process, captured)
+            if (isLateLoad && captured.length > publishedLength) {
+                val delta = stripAnsi(captured.substring(publishedLength)).trim()
+                publishedLength = captured.length
+                if (delta.isNotBlank()) appendLog(delta)
+            }
             val exitCode = process.waitFor()
+            if (isLateLoad) {
+                appendLog(
+                    "[*] KSU_LATE_LOAD_HELPER_EXIT rc=$exitCode " +
+                        "elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}",
+                )
+            }
             return CommandResult(exitCode, stripAnsi(captured.toString().trim()))
         } finally {
             if (process.isAlive) {
+                if (isLateLoad) {
+                    appendLog(
+                        "[!] KSU_LATE_LOAD_HELPER_TERMINATING " +
+                            "elapsed_ms=${SystemClock.elapsedRealtime() - startedAt}",
+                    )
+                }
                 process.destroy()
                 delay(500.milliseconds)
-                if (process.isAlive) process.destroyForcibly()
+                if (process.isAlive) {
+                    if (isLateLoad) appendLog("[!] KSU_LATE_LOAD_HELPER_FORCE_KILL")
+                    process.destroyForcibly()
+                }
             }
         }
     }
@@ -638,6 +699,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val EXPLOIT_STALL_MILLIS = 90_000L
         private const val EXPLOIT_TOTAL_MILLIS = 900_000L
         private const val HELPER_TIMEOUT_MILLIS = 120_000L
+        private const val HELPER_HEARTBEAT_MILLIS = 5_000L
         private const val INSTALL_RECEIPT = "install_receipt"
         private const val RECEIPT_BOOT_TOKEN = "kernel_boot_id"
         private const val RECEIPT_VERIFIED = "verified"
