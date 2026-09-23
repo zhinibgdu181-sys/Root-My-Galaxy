@@ -360,10 +360,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
         if (rescueModeEnabled()) {
             appendLog(app.getString(R.string.log_rescue_preparing))
+            appendLog("[*] KSU_RESCUE_DISABLE_BEGIN")
             disableAllKernelSuModulesForRescue()
+            appendLog("[*] KSU_RESCUE_DISABLE_DONE rc=0")
             appendLog(app.getString(R.string.log_rescue_ready))
         }
 
+        appendLog("[*] KSU_STAGE_BEGIN")
         if (shizukuEnabled()) {
             shizukuStage(payloads.kernelSu, SHIZUKU_KSUD_PATH, "755")
             shizukuStage(payloads.kernelSu, SHIZUKU_KSUD_STAGE_PATH, "755")
@@ -375,7 +378,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                     "/system/bin/cp $source $SHIZUKU_KSUD_STAGE_PATH && " +
                     "/system/bin/chmod 755 $SHIZUKU_KSUD_PATH $SHIZUKU_KSUD_STAGE_PATH"
             val stage = runHelper("-c", stageCommand)
+            appendLog("[*] KSU_STAGE_COPY_RESULT rc=" + stage.code)
+            if (stage.output.isNotBlank()) appendLog(stage.output)
             require(stage.code == 0) { app.getString(R.string.error_ksu_stage, stage.output) }
+            appendLog("[*] KSU_STAGE_COPY_DONE mode=BOOTSTRAP")
             appendLog(app.getString(R.string.log_ksu_staged))
         }
 
@@ -384,12 +390,14 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             delay(1.seconds)
         }
         appendLog("[+] KSU_POST_STAGE_SETTLE_DONE")
+        appendLog("[*] KSU_STAGE_VERIFY_BEGIN")
         val stageBefore = runHelper(
             "-c",
             "/system/bin/ls -l $SHIZUKU_KSUD_PATH $SHIZUKU_KSUD_STAGE_PATH /data/adb/ksud 2>&1 || true",
         )
-        appendLog("[*] KSU_LATE_LOAD_STAGE_BEFORE rc=${stageBefore.code}")
+        appendLog("[*] KSU_LATE_LOAD_STAGE_BEFORE rc=" + stageBefore.code)
         if (stageBefore.output.isNotBlank()) appendLog(stageBefore.output)
+        appendLog("[+] KSU_STAGE_VERIFY_DONE")
 
         appendLog("[*] KSU_LATE_LOAD_START")
         val lateLoad = runHelper("--late-load")
