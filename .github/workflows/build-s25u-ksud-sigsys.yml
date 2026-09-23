@@ -93,6 +93,17 @@ jobs:
             'Embedded module: BuSung-dev/Root-My-Galaxy-Payloads/kernelsu/android15-6.6_kernelsu-s25u-kdp.ko' \
             > out/BUILD_INFO.txt
 
+      - name: Upload hotfix binary early
+        uses: actions/upload-artifact@v4
+        with:
+          name: ksud-s25u-kdp-sigsys-hotfix
+          path: |
+            out/ksud-s25u-kdp-sigsys-hotfix
+            out/BUILD_INFO.txt
+            out/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Bundle patched ksud into app assets
         shell: bash
         run: |
@@ -100,6 +111,26 @@ jobs:
           mkdir -p app/src/main/assets
           cp out/ksud-s25u-kdp-sigsys-hotfix app/src/main/assets/ksud-s25u-kdp
           cmp out/ksud-s25u-kdp-sigsys-hotfix app/src/main/assets/ksud-s25u-kdp
+
+      - name: Repair inherited InstallViewModel shell literal
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/src/main/java/dev/busung/s25uroot/InstallViewModel.kt")
+          text = path.read_text()
+          old_echo = '''            echo "[ksu-prep] kptr_restrict=$value"'''
+          new_echo = '''            echo "[ksu-prep] kptr_restrict=${'$'}value"'''
+          old_test = '''            [ "$value" = "1" ] || exit 43'''
+          new_test = '''            [ "${'$'}value" = "1" ] || exit 43'''
+          if text.count(old_echo) != 1 or text.count(old_test) != 1:
+              raise SystemExit("unexpected InstallViewModel kptr shell block")
+          text = text.replace(old_echo, new_echo, 1).replace(old_test, new_test, 1)
+          path.write_text(text)
+          PY
+          grep -n 'kptr_restrict' app/src/main/java/dev/busung/s25uroot/InstallViewModel.kt | tail -n 3
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -128,17 +159,6 @@ jobs:
           unzip -l "$APK" | grep -q 'assets/ksud-s25u-kdp'
           cp "$APK" out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk
           sha256sum out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk >> out/SHA256SUMS.txt
-
-      - name: Upload hotfix binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: ksud-s25u-kdp-sigsys-hotfix
-          path: |
-            out/ksud-s25u-kdp-sigsys-hotfix
-            out/BUILD_INFO.txt
-            out/SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
