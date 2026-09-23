@@ -11,9 +11,9 @@ permissions:
 
 jobs:
   build:
-    name: Build patched ksud
+    name: Build patched ksud and APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout app fork
@@ -72,9 +72,6 @@ jobs:
           CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           set -euo pipefail
-          # KernelSU v3.2.5 still references the former Kernel-SU GitHub org.
-          # The repositories were moved to KernelSU2 with history preserved;
-          # rewrite transport URLs without changing Cargo.lock revisions.
           git config --global url."https://github.com/KernelSU2/".insteadOf "https://github.com/Kernel-SU/"
           cd KernelSU
           source .github/scripts/setup-rust-build.sh aarch64-linux-android 35
@@ -96,10 +93,57 @@ jobs:
             'Embedded module: BuSung-dev/Root-My-Galaxy-Payloads/kernelsu/android15-6.6_kernelsu-s25u-kdp.ko' \
             > out/BUILD_INFO.txt
 
-      - name: Upload hotfix
+      - name: Bundle patched ksud into app assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/src/main/assets
+          cp out/ksud-s25u-kdp-sigsys-hotfix app/src/main/assets/ksud-s25u-kdp
+          cmp out/ksud-s25u-kdp-sigsys-hotfix app/src/main/assets/ksud-s25u-kdp
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-37 cmake;3.22.1'
+          accept-android-sdk-licenses: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK with bundled patched ksud
+        shell: bash
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -euo pipefail
+          ./gradlew assembleDebug --no-daemon
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -type f | head -n1)
+          test -n "$APK"
+          unzip -l "$APK" | grep -q 'assets/ksud-s25u-kdp'
+          cp "$APK" out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk
+          sha256sum out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk >> out/SHA256SUMS.txt
+
+      - name: Upload hotfix binaries
         uses: actions/upload-artifact@v4
         with:
           name: ksud-s25u-kdp-sigsys-hotfix
-          path: out/
+          path: |
+            out/ksud-s25u-kdp-sigsys-hotfix
+            out/BUILD_INFO.txt
+            out/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RootMyGalaxy-S25U-SIGSYS-hotfix-apk
+          path: out/RootMyGalaxy-S25U-SIGSYS-hotfix.apk
           if-no-files-found: error
           retention-days: 14
