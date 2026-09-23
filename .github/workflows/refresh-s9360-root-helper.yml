@@ -1,5 +1,6 @@
 name: Refresh S9360 root helper
 # Rebuild helper after payload-source changes.
+# Triggered for source refreshes so the embedded S9360 helper stays in sync.
 # Persist KSU late-load diagnostics and loader lifecycle events in the refreshed native helper.
 
 on:
