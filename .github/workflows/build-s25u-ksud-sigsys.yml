@@ -69,6 +69,7 @@ jobs:
         shell: bash
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
           set -euo pipefail
           cd KernelSU
