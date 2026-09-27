@@ -308,7 +308,6 @@ private fun RootApp(
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
-    var updateCardDismissed by remember { mutableStateOf(false) }
     val checkForUpdate: () -> Unit = {
         if (!updateStatus.busy) {
             updateStatus = UpdateStatus.Checking
@@ -341,7 +340,6 @@ private fun RootApp(
             }
         }
     }
-    LaunchedEffect(Unit) { checkForUpdate() }
 
     if (showTargetPicker) {
         TargetSelectionSheet(
@@ -487,10 +485,6 @@ private fun RootApp(
                     padding = padding,
                     device = device,
                     installState = installState,
-                    updateStatus = updateStatus,
-                    updateCardDismissed = updateCardDismissed,
-                    onDismissUpdateCard = { updateCardDismissed = true },
-                    onStartDownload = startDownload,
                     onInstall = {
                         selectedProfile = null
                         if (advancedMode) {
@@ -564,10 +558,6 @@ private fun OverviewPage(
     padding: PaddingValues,
     device: DeviceSnapshot,
     installState: InstallUiState,
-    updateStatus: UpdateStatus,
-    updateCardDismissed: Boolean,
-    onDismissUpdateCard: () -> Unit,
-    onStartDownload: (UpdateInfo) -> Unit,
     onInstall: () -> Unit,
 ) {
     LazyColumn(
@@ -596,18 +586,6 @@ private fun OverviewPage(
                 AppVersionText(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                )
-            }
-        }
-        if (
-            !updateCardDismissed &&
-            updateStatus.info != null
-        ) {
-            item {
-                UpdateCard(
-                    status = updateStatus,
-                    onDismiss = onDismissUpdateCard,
-                    onStartDownload = onStartDownload,
                 )
             }
         }
