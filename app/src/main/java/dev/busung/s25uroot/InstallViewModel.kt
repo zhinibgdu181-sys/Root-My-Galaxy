@@ -177,12 +177,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             startHistory()
             val device = DeviceSnapshot.current()
             val exactS9360Czg1 = isExactS9360Czg1(device)
-            // Freeze run-critical settings. For the exact SM-S9360 CZG1
-            // diagnostic target, rescue mode is forced on so an old persisted
-            // preference cannot silently bypass the module-disable step.
+            // Freeze run-critical settings for this run. Rescue mode is
+            // user-controlled on every target, including the exact S9360 CZG1.
             activeRunShizuku = AppPreferences.shizukuMode(app)
-            activeRunRescueDisableModules =
-                if (exactS9360Czg1) true else AppPreferences.rescueDisableKsuModules(app)
+            activeRunRescueDisableModules = AppPreferences.rescueDisableKsuModules(app)
             appendLog(
                 "[+] RESCUE_V2 build=${BuildConfig.VERSION_NAME} " +
                     "rescue=${if (rescueModeEnabled()) "ON" else "OFF"} " +
