@@ -19,10 +19,21 @@ class PayloadRepository(private val context: Context) {
     fun loadTargets(): List<TargetProfile> {
         val commit = resolveMainCommit()
         val manifestBytes = downloadBytes(rawUrl(commit, "support/targets-v3.json"), MAX_MANIFEST_BYTES)
-        return SupportManifest.parse(manifestBytes).targets.map { profile -> profile.copy(
-            exploit = profile.exploit.copy(url = pinArtifactUrl(profile.exploit.url, commit)),
-            kernelSu = profile.kernelSu.copy(url = pinArtifactUrl(profile.kernelSu.url, commit)),
-        ) }
+        return SupportManifest.parse(manifestBytes).targets.map { profile ->
+            val pinnedExploit = profile.exploit.copy(url = pinArtifactUrl(profile.exploit.url, commit))
+            val pinnedKernelSu = if (profile.profileId == S9360_PROFILE_ID) {
+                RemoteArtifact(
+                    url = S9360_KSU_V330_URL,
+                    size = S9360_KSU_V330_SIZE,
+                )
+            } else {
+                profile.kernelSu.copy(url = pinArtifactUrl(profile.kernelSu.url, commit))
+            }
+            profile.copy(
+                exploit = pinnedExploit,
+                kernelSu = pinnedKernelSu,
+            )
+        }
     }
 
     fun resolveTarget(snapshot: DeviceSnapshot): TargetProfile = loadTargets()
@@ -141,6 +152,10 @@ class PayloadRepository(private val context: Context) {
         private const val RAW_REPOSITORY =
             "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads"
         private const val MUTABLE_RAW_PREFIX = "$RAW_REPOSITORY/main/"
+        private const val S9360_PROFILE_ID = "pa2q-S9360ZCSCCZG1"
+        private const val S9360_KSU_V330_URL =
+            "https://raw.githubusercontent.com/zhinibgdu181-sys/Root-My-Galaxy-Payloads/9245a51770ecb6bb121db2e96e96e2d574a40312/kernelsu/candidates/v3.3.0/ksud-s25u-kdp-v3.3.0"
+        private const val S9360_KSU_V330_SIZE = 5_094_768L
         private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
         private const val MAX_MANIFEST_BYTES = 256 * 1024
     }
