@@ -177,12 +177,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             startHistory()
             val device = DeviceSnapshot.current()
             val exactS9360Czg1 = isExactS9360Czg1(device)
-            // Freeze run-critical settings. For the exact SM-S9360 CZG1
-            // diagnostic target, rescue mode is forced on so an old persisted
-            // preference cannot silently bypass the module-disable step.
+            // Freeze run-critical settings for this install attempt.
+            // Rescue mode remains explicit user intent on the S9360 as well.
             activeRunShizuku = AppPreferences.shizukuMode(app)
-            activeRunRescueDisableModules =
-                if (exactS9360Czg1) true else AppPreferences.rescueDisableKsuModules(app)
+            activeRunRescueDisableModules = AppPreferences.rescueDisableKsuModules(app)
             appendLog(
                 "[+] RESCUE_V2 build=${BuildConfig.VERSION_NAME} " +
                     "rescue=${if (rescueModeEnabled()) "ON" else "OFF"} " +
@@ -377,10 +375,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
 
         if (rescueModeEnabled()) {
             appendLog(app.getString(R.string.log_rescue_preparing))
-            appendLog("[*] KSU_RESCUE_DISABLE_BEGIN")
-            disableAllKernelSuModulesForRescue()
-            appendLog("[*] KSU_RESCUE_DISABLE_DONE rc=0")
-            appendLog(app.getString(R.string.log_rescue_ready))
+            appendLog("[*] KSU_RESCUE_PRE_DISABLE_BEGIN")
+            disableAllKernelSuModulesForRescue("pre")
+            appendLog("[*] KSU_RESCUE_PRE_DISABLE_DONE rc=0")
         }
 
         appendLog("[*] KSU_STAGE_BEGIN")
@@ -489,6 +486,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[*] KSU_LATE_LOAD_STAGE_AFTER rc=${stageAfter.code}")
         if (stageAfter.output.isNotBlank()) appendLog(stageAfter.output)
 
+        if (rescueModeEnabled()) {
+            // Some S9360 runs expose /data/adb/modules only after KernelSU
+            // finishes late-load. Repeat the disable pass after control is
+            // active so rescue mode cannot silently succeed with zero modules.
+            appendLog("[*] KSU_RESCUE_POST_DISABLE_BEGIN")
+            disableAllKernelSuModulesForRescue("post")
+            appendLog("[*] KSU_RESCUE_POST_DISABLE_DONE rc=0")
+            appendLog(app.getString(R.string.log_rescue_ready))
+        }
+
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
     }
@@ -512,21 +519,54 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[+] KSU_KPTR_READY")
     }
 
-    private suspend fun disableAllKernelSuModulesForRescue() {
+    private suspend fun disableAllKernelSuModulesForRescue(stage: String) {
+        val stageToken = if (stage == "post") "post" else "pre"
         val command = """
+            stage=$stageToken
+            roots_seen=0
+            modules_seen=0
             disabled=0
+            verified=0
+            failed=0
+
             for root in /data/adb/modules /data/adb/modules_update; do
-                [ -d "${'$'}root" ] || continue
+                if [ ! -d "${'$'}root" ]; then
+                    echo "[rescue] stage=${'$'}stage root_missing=${'$'}root"
+                    continue
+                fi
+
+                roots_seen=${'$'}((roots_seen + 1))
+                echo "[rescue] stage=${'$'}stage scanning=${'$'}root"
+
                 for module in "${'$'}root"/*; do
                     [ -d "${'$'}module" ] || continue
-                    : > "${'$'}module/disable" || exit 41
-                    disabled=${'$'}((disabled + 1))
-                    echo "[rescue] disabled ${'$'}{module##*/}"
+                    modules_seen=${'$'}((modules_seen + 1))
+                    module_id=${'$'}{module##*/}
+
+                    if : > "${'$'}module/disable"; then
+                        disabled=${'$'}((disabled + 1))
+                    else
+                        echo "[rescue] stage=${'$'}stage disable_write_failed=${'$'}module_id"
+                        failed=${'$'}((failed + 1))
+                        continue
+                    fi
+
+                    if [ -f "${'$'}module/disable" ]; then
+                        verified=${'$'}((verified + 1))
+                        echo "[rescue] stage=${'$'}stage disabled=${'$'}module_id"
+                    else
+                        echo "[rescue] stage=${'$'}stage disable_verify_failed=${'$'}module_id"
+                        failed=${'$'}((failed + 1))
+                    fi
                 done
             done
-            echo "[rescue] modules_disabled=${'$'}disabled"
+
+            echo "[rescue] summary stage=${'$'}stage roots=${'$'}roots_seen modules=${'$'}modules_seen disabled=${'$'}disabled verified=${'$'}verified failed=${'$'}failed"
+            [ "${'$'}failed" -eq 0 ] || exit 41
+            [ "${'$'}disabled" -eq "${'$'}verified" ] || exit 42
         """.trimIndent()
         val result = runHelper("-c", command)
+        if (result.output.isNotBlank()) appendLog(result.output)
         require(result.code == 0) {
             app.getString(
                 R.string.error_rescue_disable_modules,
@@ -534,9 +574,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 result.output,
             )
         }
-        if (result.output.isNotBlank()) appendLog(result.output)
     }
-
     private fun isExactS9360Czg1(device: DeviceSnapshot): Boolean =
         device.model.equals("SM-S9360", ignoreCase = true) &&
             (
