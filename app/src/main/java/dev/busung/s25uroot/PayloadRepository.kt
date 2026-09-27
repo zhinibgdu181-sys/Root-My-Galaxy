@@ -7,7 +7,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import org.json.JSONObject
 
 data class VerifiedPayloads(
     val profile: TargetProfile,
@@ -90,14 +89,7 @@ class PayloadRepository(private val context: Context) {
         return destination
     }
 
-    private fun resolveMainCommit(): String {
-        val response = downloadBytes(COMMIT_API_URL, MAX_COMMIT_RESPONSE_BYTES)
-        val commit = JSONObject(response.toString(Charsets.UTF_8))
-            .getJSONObject("object")
-            .getString("sha")
-        require(commit.matches(Regex("[0-9a-f]{40}"))) { context.getString(R.string.repo_commit_invalid) }
-        return commit
-    }
+    private fun resolveMainCommit(): String = PAYLOAD_COMMIT
 
     private fun rawUrl(commit: String, path: String) = "$RAW_REPOSITORY/$commit/$path"
 
@@ -136,12 +128,15 @@ class PayloadRepository(private val context: Context) {
         }
 
     companion object {
-        private const val COMMIT_API_URL =
-            "https://api.github.com/repos/BuSung-dev/Root-My-Galaxy-Payloads/git/ref/heads/main"
+        // Test build pinned to the audited v3.3.0 Samsung candidate payload set.
+        private const val PAYLOAD_COMMIT =
+            "f339e550b516d7efe4d8bc8ef98b9fc06b4138aa"
         private const val RAW_REPOSITORY =
-            "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads"
-        private const val MUTABLE_RAW_PREFIX = "$RAW_REPOSITORY/main/"
-        private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
+            "https://raw.githubusercontent.com/zhinibgdu181-sys/Root-My-Galaxy-Payloads"
+        // The manifest keeps upstream-style URLs as stable logical artifact paths;
+        // pin them to the fork commit above before downloading.
+        private const val MUTABLE_RAW_PREFIX =
+            "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads/main/"
         private const val MAX_MANIFEST_BYTES = 256 * 1024
     }
 }
