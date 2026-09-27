@@ -63,8 +63,24 @@ object AppUpdater {
         }
     }
 
-    fun isUpdateAvailable(latestVersion: String, currentVersion: String): Boolean =
-        latestVersion.isNotEmpty() && latestVersion != currentVersion
+    fun isUpdateAvailable(latestVersion: String, currentVersion: String): Boolean {
+        val latest = numericVersion(latestVersion) ?: return false
+        val current = numericVersion(currentVersion) ?: return false
+        val width = maxOf(latest.size, current.size)
+        for (index in 0 until width) {
+            val left = latest.getOrElse(index) { 0 }
+            val right = current.getOrElse(index) { 0 }
+            if (left != right) return left > right
+        }
+        return false
+    }
+
+    private fun numericVersion(value: String): List<Int>? {
+        val core = value.trim().removePrefix("v").substringBefore('-')
+        if (core.isBlank()) return null
+        val parts = core.split('.').map { it.toIntOrNull() ?: return null }
+        return parts.takeIf { it.isNotEmpty() }
+    }
 
     suspend fun downloadApk(
         context: Context,
