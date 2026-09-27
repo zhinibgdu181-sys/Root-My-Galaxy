@@ -599,18 +599,6 @@ private fun OverviewPage(
                 )
             }
         }
-        if (
-            !updateCardDismissed &&
-            updateStatus.info != null
-        ) {
-            item {
-                UpdateCard(
-                    status = updateStatus,
-                    onDismiss = onDismissUpdateCard,
-                    onStartDownload = onStartDownload,
-                )
-            }
-        }
         item { InstallStatusCard(installState, onInstall) }
         item { DeviceCard(device) }
         item { HowItWorksCard() }
