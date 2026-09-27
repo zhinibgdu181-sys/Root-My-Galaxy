@@ -1,5 +1,5 @@
 name: CI Build
-# Build current main after KernelSU diagnostic export ordering fix.
+# Build current main after S9360 bootstrap mount-namespace normalization.
 
 on:
   push:
